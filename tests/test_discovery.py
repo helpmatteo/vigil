@@ -1,0 +1,290 @@
+from __future__ import annotations
+
+from unittest.mock import AsyncMock
+
+import httpx
+import pytest
+
+from vigil.discovery import (
+    DiscoveryResult,
+    InstanceInfo,
+    RateLimitError,
+    fetch_instances,
+)
+
+API_KEY = "test-api-key"
+
+
+def _mock_response(
+    json_data: dict,
+    status_code: int = 200,
+    headers: dict[str, str] | None = None,
+) -> httpx.Response:
+    """Build a real httpx.Response with the given JSON body and status."""
+    return httpx.Response(
+        status_code=status_code,
+        json=json_data,
+        headers=headers or {},
+        request=httpx.Request("GET", "https://console.vast.ai/api/v0/instances/"),
+    )
+
+
+def _running_instance(**overrides) -> dict:
+    """Return a minimal running instance dict, with optional overrides."""
+    base = {
+        "id": 12345,
+        "ssh_host": "ssh5.vast.ai",
+        "ssh_port": 22222,
+        "gpu_name": "RTX 4090",
+        "num_gpus": 2,
+        "actual_status": "running",
+        "machine_id": 999,
+        "label": "my-job",
+        "dph_total": 0.50,
+    }
+    base.update(overrides)
+    return base
+
+
+@pytest.mark.anyio
+async def test_fetch_instances_parses_response():
+    payload = {"instances": [_running_instance()]}
+    client = AsyncMock(spec=httpx.AsyncClient)
+    client.get = AsyncMock(return_value=_mock_response(payload))
+
+    result = await fetch_instances(API_KEY, client)
+
+    assert len(result.running) == 1
+    inst = result.running[0]
+    assert isinstance(inst, InstanceInfo)
+    assert inst.id == 12345
+    assert inst.ssh_host == "ssh5.vast.ai"
+    assert inst.ssh_port == 22222
+    assert inst.gpu_name == "RTX 4090"
+    assert inst.num_gpus == 2
+    assert inst.status == "running"
+    assert inst.machine_id == 999
+    assert inst.label == "my-job"
+    assert inst.dph_total == 0.50
+
+
+@pytest.mark.anyio
+async def test_fetch_instances_skips_non_running():
+    payload = {
+        "instances": [
+            _running_instance(id=1, actual_status="exited"),
+            _running_instance(id=2, actual_status="running"),
+        ]
+    }
+    client = AsyncMock(spec=httpx.AsyncClient)
+    client.get = AsyncMock(return_value=_mock_response(payload))
+
+    result = await fetch_instances(API_KEY, client)
+
+    assert len(result.running) == 1
+    assert result.running[0].id == 2
+    # "exited" is a terminal status — should NOT appear in stuck
+    assert len(result.stuck) == 0
+
+
+@pytest.mark.anyio
+async def test_fetch_instances_skips_no_ssh():
+    payload = {
+        "instances": [
+            _running_instance(id=1, ssh_host=""),
+            _running_instance(id=2, ssh_host=None),
+            _running_instance(id=3, ssh_host="ssh.vast.ai"),
+        ]
+    }
+    client = AsyncMock(spec=httpx.AsyncClient)
+    client.get = AsyncMock(return_value=_mock_response(payload))
+
+    result = await fetch_instances(API_KEY, client)
+
+    assert len(result.running) == 1
+    assert result.running[0].id == 3
+    # Instances with empty/null ssh_host go to stuck
+    assert len(result.stuck) == 2
+    assert {i.id for i in result.stuck} == {1, 2}
+
+
+@pytest.mark.anyio
+async def test_fetch_instances_handles_malformed():
+    payload = {
+        "instances": [
+            {"garbage": True},  # missing required fields
+            _running_instance(id=7),
+        ]
+    }
+    client = AsyncMock(spec=httpx.AsyncClient)
+    client.get = AsyncMock(return_value=_mock_response(payload))
+
+    result = await fetch_instances(API_KEY, client)
+
+    assert len(result.running) == 1
+    assert result.running[0].id == 7
+    assert len(result.stuck) == 0
+
+
+@pytest.mark.anyio
+async def test_rate_limit_error():
+    response = _mock_response(
+        json_data={},
+        status_code=429,
+        headers={"Retry-After": "30"},
+    )
+    client = AsyncMock(spec=httpx.AsyncClient)
+    client.get = AsyncMock(return_value=response)
+
+    with pytest.raises(RateLimitError) as exc_info:
+        await fetch_instances(API_KEY, client)
+
+    assert exc_info.value.retry_after == 30.0
+
+
+@pytest.mark.anyio
+async def test_rate_limit_error_default():
+    response = _mock_response(
+        json_data={},
+        status_code=429,
+        headers={},
+    )
+    client = AsyncMock(spec=httpx.AsyncClient)
+    client.get = AsyncMock(return_value=response)
+
+    with pytest.raises(RateLimitError) as exc_info:
+        await fetch_instances(API_KEY, client)
+
+    assert exc_info.value.retry_after == 60.0
+
+
+@pytest.mark.anyio
+async def test_fetch_returns_discovery_result():
+    payload = {
+        "instances": [
+            _running_instance(id=1, actual_status="running"),
+            _running_instance(id=2, actual_status="exited"),
+            _running_instance(id=3, actual_status="loading", ssh_host=""),
+            _running_instance(id=4, actual_status="running"),
+        ]
+    }
+    client = AsyncMock(spec=httpx.AsyncClient)
+    client.get = AsyncMock(return_value=_mock_response(payload))
+
+    result = await fetch_instances(API_KEY, client)
+
+    assert isinstance(result, DiscoveryResult)
+    assert len(result.running) == 2
+    assert {i.id for i in result.running} == {1, 4}
+    # id=2 is "exited" (terminal) — not stuck; id=3 is "loading" with no SSH — stuck
+    assert len(result.stuck) == 1
+    assert result.stuck[0].id == 3
+
+
+# ------------------------------------------------------------------
+# fetch_credit tests
+# ------------------------------------------------------------------
+
+
+@pytest.mark.anyio
+async def test_fetch_credit_success():
+    from vigil.discovery import fetch_credit
+
+    response = _mock_response({"credit": 42.5}, status_code=200)
+    client = AsyncMock(spec=httpx.AsyncClient)
+    client.get = AsyncMock(return_value=response)
+
+    result = await fetch_credit(API_KEY, client)
+
+    assert result == 42.5
+
+
+@pytest.mark.anyio
+async def test_fetch_credit_rate_limit_returns_none():
+    from vigil.discovery import fetch_credit
+
+    response = _mock_response({}, status_code=429)
+    client = AsyncMock(spec=httpx.AsyncClient)
+    client.get = AsyncMock(return_value=response)
+
+    result = await fetch_credit(API_KEY, client)
+
+    assert result is None
+
+
+@pytest.mark.anyio
+async def test_fetch_credit_error_returns_none():
+    from vigil.discovery import fetch_credit
+
+    client = AsyncMock(spec=httpx.AsyncClient)
+    client.get = AsyncMock(side_effect=httpx.ConnectError("connection refused"))
+
+    result = await fetch_credit(API_KEY, client)
+
+    assert result is None
+
+
+@pytest.mark.anyio
+async def test_fetch_credit_http_error_returns_none():
+    from vigil.discovery import fetch_credit
+
+    response = _mock_response({"error": "forbidden"}, status_code=403)
+    client = AsyncMock(spec=httpx.AsyncClient)
+    client.get = AsyncMock(return_value=response)
+
+    result = await fetch_credit(API_KEY, client)
+
+    assert result is None
+
+
+@pytest.mark.anyio
+async def test_fetch_credit_missing_credit_field():
+    from vigil.discovery import fetch_credit
+
+    response = _mock_response({"username": "test"}, status_code=200)
+    client = AsyncMock(spec=httpx.AsyncClient)
+    client.get = AsyncMock(return_value=response)
+
+    result = await fetch_credit(API_KEY, client)
+
+    assert result == 0.0
+
+
+# ------------------------------------------------------------------
+# destroy_instance tests
+# ------------------------------------------------------------------
+
+
+@pytest.mark.anyio
+async def test_destroy_instance_success():
+    from vigil.discovery import destroy_instance
+
+    response = httpx.Response(
+        status_code=200,
+        json={"success": True},
+        request=httpx.Request("DELETE", "https://console.vast.ai/api/v0/instances/123/"),
+    )
+    client = AsyncMock(spec=httpx.AsyncClient)
+    client.delete = AsyncMock(return_value=response)
+
+    await destroy_instance(API_KEY, 123, client)
+
+    client.delete.assert_called_once()
+    call_args = client.delete.call_args
+    assert "instances/123/" in call_args.args[0]
+
+
+@pytest.mark.anyio
+async def test_destroy_instance_raises_on_http_error():
+    from vigil.discovery import destroy_instance
+
+    response = httpx.Response(
+        status_code=500,
+        json={"error": "internal"},
+        request=httpx.Request("DELETE", "https://console.vast.ai/api/v0/instances/456/"),
+    )
+    client = AsyncMock(spec=httpx.AsyncClient)
+    client.delete = AsyncMock(return_value=response)
+
+    with pytest.raises(httpx.HTTPStatusError):
+        await destroy_instance(API_KEY, 456, client)
