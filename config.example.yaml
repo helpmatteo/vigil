@@ -1,0 +1,169 @@
+# ── Vigil Configuration ──────────────────────────────────────────────
+#
+# Default location: ~/.config/vigil/config.yaml
+# All fields are optional — defaults are shown below.
+
+# GPU cloud provider (supported: vast, runpod)
+provider: vast
+
+# Provider API key (or set VIGIL_API_KEY, VAST_API_KEY, or RUNPOD_API_KEY env var)
+api_key: null
+
+# How often to poll provider API for instance changes (seconds)
+poll_interval: 30
+
+# Where to store persistent logs locally
+log_dir: "~/.vigil/logs"
+
+# Path to SSH private key for connecting to instances
+ssh_key_path: "~/.ssh/id_ed25519"
+
+# Default shell command to stream logs from each instance.
+# This smart heuristic finds training process stdout, then recent log files,
+# then falls back to provider-specific logs.
+# Override per-instance below if needed.
+default_log_command: null  # uses built-in heuristic when null
+
+# ── Log Retention ─────────────────────────────────────────────────────
+
+# Automatically delete log files older than N days (0 = keep forever)
+log_retention_days: 0
+
+# Maximum total log storage in MB (0 = unlimited)
+# When exceeded, oldest sessions are deleted first
+log_max_size_mb: 0
+
+# ── SSH Settings ──────────────────────────────────────────────────────
+
+# SSH username for connecting to instances (default: root)
+ssh_username: "root"
+
+# SSH connection timeout in seconds
+ssh_login_timeout: 10
+
+# SSH keepalive interval in seconds (0 to disable)
+ssh_keepalive_interval: 15
+
+# ── Alerting ──────────────────────────────────────────────────────────
+
+# Minutes of no output before triggering a stall alert (global default)
+stall_threshold_minutes: 5
+
+# Loss plateau detection: number of readings to check
+plateau_window: 8
+
+# Loss plateau detection: stdev threshold below which loss is "flat"
+plateau_threshold: 0.0001
+
+# Enable macOS/Linux desktop notifications for NaN/plateau/stall alerts
+desktop_notifications: true
+
+# Webhook URL for alerts (POST with JSON payload)
+# Payload: {timestamp, instance_id, alert_type, message, metrics?}
+alert_webhook_url: null
+
+# Webhook payload format: "raw" (default), "slack", or "discord"
+# - raw: {timestamp, instance_id, alert_type, message, metrics?, gpu_name?, ...}
+# - slack: Slack Block Kit message with rich formatting
+# - discord: Discord embed with color-coded severity
+alert_webhook_format: "raw"
+
+# ── Display ───────────────────────────────────────────────────────────
+
+# Number of metric readings to keep for sparkline rendering
+sparkline_history: 60
+
+# Enable Rich syntax highlighting on log lines (can be noisy for raw training output)
+highlight_logs: false
+
+# ── Layout & Buffers ─────────────────────────────────────────────────
+
+# Maximum grid columns (for users with many instances on wide monitors)
+max_grid_columns: 3
+
+# In-memory log buffer per instance (affects search range)
+log_buffer_lines: 5000
+
+# Maximum lines displayed in the RichLog widget
+log_display_lines: 2000
+
+# Maximum seconds between SSH reconnect attempts
+reconnect_backoff_max: 60
+
+# ── Metric Parsing ────────────────────────────────────────────────────
+#
+# Regex patterns with named capture groups for extracting metrics from log lines.
+# Setting this REPLACES all defaults. To add a custom pattern while keeping
+# defaults, copy the defaults below and append your patterns.
+#
+# metric_patterns:
+#   - 'loss[:\s=]+(?P<loss>[\d.]+)'
+#   - 'step[:\s=]+(?P<step>\d+(?:,\d{3})*)'
+#   - 'epoch[:\s=]+(?P<epoch>[\d./]+)'
+#   - '(?<![a-z])lr[:\s=]+(?P<lr>[\d.e\-]+)'
+#   - 'reward[:\s=]+(?P<reward>[\d.\-e]+)'
+#   - 'accuracy[:\s=]+(?P<accuracy>[\d.]+)'
+#   - 'rssm[:\s=]+(?P<rssm>[\d.\-e]+)'
+#   - '(?<![a-z])vc[:\s=]+(?P<vc>[\d.\-e]+)'
+#   - '(?<![a-z])tom[:\s=]+(?P<tom>[\d.\-e]+)'
+#   - 'actor[:\s=]+(?P<actor>[\d.\-e]+)'
+
+# Add custom patterns without replacing the 10 built-in defaults.
+# These patterns are APPENDED to the defaults.
+# extra_metric_patterns:
+#   - 'val_loss[:\s=]+(?P<val_loss>[\d.]+)'
+#   - 'perplexity[:\s=]+(?P<ppl>[\d.]+)'
+
+# ── Metric Semantics ──────────────────────────────────────────────────
+#
+# Control how metrics are displayed: direction coloring and counter classification.
+# These lists determine whether a metric gets green (improving) or red (worsening).
+#
+# Defaults: decrease_good=[loss, rssm, vc, tom], increase_good=[reward, accuracy],
+#           counters=[step, epoch], plateau_metrics=[loss]
+#
+# Example: extending defaults for additional metrics your training logs produce:
+#
+# decrease_good:
+#   - loss
+#   - val_loss
+#   - rssm
+#   - vc
+#   - tom
+#   - ppl
+#
+# increase_good:
+#   - reward
+#   - accuracy
+#   - val_accuracy
+#
+# counters:
+#   - step
+#   - epoch
+#
+# Which metrics to watch for plateau detection
+# plateau_metrics:
+#   - loss
+#   - val_loss
+
+# ── Notification Control ──────────────────────────────────────────────
+#
+# Granular control over which alerts trigger notifications.
+# All default to true.
+#
+# notifications:
+#   nan: true           # NaN/Inf detected in metrics
+#   plateau: true       # Loss plateau detected
+#   stall: true         # No output for configured minutes
+#   desktop: true       # Master switch for OS desktop notifications
+#   webhook: true       # Master switch for webhook alerts
+
+# ── Per-Instance Overrides ────────────────────────────────────────────
+#
+# instances:
+#   12345:
+#     log_command: "tail -f /workspace/training.log"
+#     stall_threshold_minutes: 10
+#     ssh_username: "trainer"
+#   67890:
+#     log_command: "docker logs -f training_container"
