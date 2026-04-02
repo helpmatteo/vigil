@@ -4,7 +4,7 @@
 
 ![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue)
 ![License MIT](https://img.shields.io/badge/license-MIT-green)
-![PyPI](https://img.shields.io/badge/pypi-vigil-orange)
+[![PyPI](https://img.shields.io/pypi/v/vigil-gpu)](https://pypi.org/project/vigil-gpu/)
 
 > **TL;DR** — `pip install vigil-gpu && vigil`. A single terminal command gives you live SSH log streaming from every cloud GPU instance, regex-parsed metrics with sparklines, NaN/stall/plateau alerts to desktop or Slack/Discord, nvidia-smi on demand, persistent logs that survive crashes, and a setup wizard that auto-detects your framework. All from a keyboard-driven TUI.
 
@@ -12,7 +12,7 @@
 
 ## The Problem
 
-Cloud GPU consoles (Vast.ai, RunPod, Lambda, etc.) provide delayed, truncated output and offer no log persistence when instances crash or are preempted. If you are running multiple GPU training jobs across rented instances, you need a tool that streams logs in real time, survives disconnections, and alerts you before a stalled run burns through your budget.
+Cloud GPU consoles (Vast.ai, RunPod, etc.) provide delayed, truncated output and offer no log persistence when instances crash or are preempted. If you are running multiple GPU training jobs across rented instances, you need a tool that streams logs in real time, survives disconnections, and alerts you before a stalled run burns through your budget.
 
 ## Supported Providers
 
@@ -114,6 +114,12 @@ Cloud GPU consoles (Vast.ai, RunPod, Lambda, etc.) provide delayed, truncated ou
 ```bash
 pip install vigil-gpu
 vigil
+```
+
+Try it without an API key first:
+
+```bash
+vigil --demo
 ```
 
 If this is your first run, the setup wizard will guide you through configuration. Otherwise, provide your API key via any of these methods (checked in order):
@@ -350,6 +356,21 @@ Vigil runs a discovery loop that polls your GPU provider's API at a configurable
 
 All I/O is async. SSH connections use keepalive heartbeats and reconnect with exponential backoff. Log files are buffered and flushed periodically. Notifications and webhooks are fire-and-forget to never block the UI.
 
+## Alternatives
+
+Existing tools cover parts of this problem but not the combination:
+
+| Tool | What it does | What it doesn't do |
+|---|---|---|
+| [nvitop](https://github.com/XuehaiPan/nvitop) | Interactive GPU process viewer (TUI) | No log streaming, no training metrics |
+| [nvtop](https://github.com/Syllo/nvtop) | htop for GPUs, multi-vendor | Hardware stats only |
+| [gpuview](https://github.com/fgaim/gpuview) | Web dashboard aggregating GPU servers | No training awareness, no alerts |
+| [vasttools](https://github.com/jjziets/vasttools) | Vast.ai management toolkit | No unified TUI, no metric parsing |
+| [GPU-pro](https://github.com/ulixcode-labs/GPU-pro) | Terminal + web GPU monitoring | Hardware focus, no log streaming |
+| tmux + W&B | Manual multi-pane + experiment tracking | 3+ tools, no unified view, no stall alerts |
+
+Vigil combines SSH log streaming, real-time metric parsing, alerting (stall/NaN/plateau), and log persistence in a single keyboard-driven TUI.
+
 ## Requirements
 
 - **Python 3.10+**
@@ -359,11 +380,10 @@ All I/O is async. SSH connections use keepalive heartbeats and reconnect with ex
 ## Development
 
 ```bash
-git clone https://github.com/vigil-gpu/vigil.git
+git clone https://github.com/helpmatteo/vigil.git
 cd vigil
-python -m venv .venv && source .venv/bin/activate
-pip install -e .
-vigil --config config.example.yaml
+uv sync
+uv run vigil --config config.example.yaml
 ```
 
 ## Contributing
